@@ -70,6 +70,17 @@ return [
             'block_for' => null,
             'after_commit' => false,
         ],
+        
+        'kafka' => [
+            'driver' => 'kafka',
+            'queue' => env('KAFKA_QUEUE_NAME', 'default'),
+            'consumer_group_id' => env('KAFKA_CONSUMER_GROUP_ID', 'queue-app-group'),
+            'brokers' => env('KAFKA_BROKERS', 'kafka:9092'),
+            'sleep_on_error' => env('KAFKA_ERROR_SLEEP', 5),
+            'sleep_when_empty' => env('KAFKA_SLEEP_WHEN_EMPTY', 2),
+            'auto_offset_reset' => env('KAFKA_AUTO_OFFSET_RESET', 'latest'),
+            'enable_auto_commit' => env('KAFKA_AUTO_COMMIT', true),
+        ],
 
     ],
 

@@ -5,6 +5,7 @@ namespace App\Providers;
 use App\Events\ClientCreated;
 use App\Events\ClientDestroyed;
 use App\Listeners\AddClientToQueue;
+use App\Listeners\ProcessQueueEvent;
 use App\Listeners\RemoveClientFromQueue;
 use App\Models\Client;
 use App\Observers\ClientObserver;
@@ -30,6 +31,10 @@ class EventServiceProvider extends ServiceProvider
         ClientDestroyed::class=>[
             RemoveClientFromQueue::class,
         ],
+        // Для Kafka-событий используем ProcessQueueEvent
+        'kafka.event.received' => [
+            ProcessQueueEvent::class,
+        ],
     ];
 
     /**
@@ -37,8 +42,10 @@ class EventServiceProvider extends ServiceProvider
      *
      * @return void
      */
-    public function boot()
+    public function boot(): void
     {
+        // Регистрация обработчиков событий
+        parent::boot();
     }
 
     /**
@@ -46,7 +53,7 @@ class EventServiceProvider extends ServiceProvider
      *
      * @return bool
      */
-    public function shouldDiscoverEvents()
+    public function shouldDiscoverEvents(): bool
     {
         return false;
     }

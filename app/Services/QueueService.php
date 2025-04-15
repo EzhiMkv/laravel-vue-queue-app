@@ -7,11 +7,21 @@ use App\Models\Client;
 use App\Models\QueuePosition;
 use App\Repositories\ClientRepository;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Carbon;
 
 class QueueService
 {
-    public function __construct(){
+    protected KafkaProducerService $kafkaProducer;
+    protected RedisService $redisService;
+    protected Carbon $startTime;
+    
+    public function __construct(KafkaProducerService $kafkaProducer, RedisService $redisService){
+        $this->kafkaProducer = $kafkaProducer;
+        $this->redisService = $redisService;
+        $this->startTime = now();
     }
+    
     public function addClientToQueue(Client $client): void
     {
         $position = 1;
@@ -20,20 +30,47 @@ class QueueService
             $position = $last_position->position + 1;
         }
         QueuePosition::create(['client_id'=>$client->id, 'position'=>$position]);
+        
+        // Инкрементируем счетчик клиентов в Redis
+        $this->redisService->incrementClientCounter();
+        
+        // Кэшируем обновленную очередь
+        $this->cacheQueueData();
     }
 
     public function removeClientFromQueue(Client $client): void
     {
         $client_position = $client->position->position;
-        DB::statement('UPDATE queue SET position = position - 1 WHERE position > :client_position', ['client_position'=>$client_position]);
+        DB::statement('UPDATE queue_positions SET position = position - 1 WHERE position > :client_position', ['client_position'=>$client_position]);
+        
+        // Кэшируем обновленную очередь
+        $this->cacheQueueData();
     }
 
     public function proceed(){
         $first_client_position = QueuePosition::orderBy('position', 'asc')->first();
+        $client = null;
+        
         if($first_client_position){
-            $first_client_position->client->delete();
+            $client = $first_client_position->client;
+            
+            // Считаем время обслуживания
+            $serviceTime = $this->calculateServiceTime();
+            
+            // Сохраняем статистику в Redis
+            $this->redisService->addServiceStats($client->id, $serviceTime);
+            
+            $client->delete();
+            
+            // Отправляем событие в Kafka о продвижении очереди
+            $this->kafkaProducer->sendQueueProceededEvent($client);
+            
+            // Сбрасываем таймер обслуживания
+            $this->startTime = now();
         }
-        return $this->getFullQueue();
+        
+        // Кэшируем обновленную очередь
+        return $this->cacheQueueData();
     }
 
     public function getNextClient(){
@@ -53,7 +90,44 @@ class QueueService
     }
 
     public function getFullQueue(){
-        return QueuePosition::with('client')->orderBy('position', 'asc')->get();
+        // Пробуем получить данные из кэша
+        $cachedData = $this->redisService->getCachedQueueData();
+        
+        // Если в кэше нет данных, получаем из БД и кэшируем
+        if (!$cachedData) {
+            return $this->cacheQueueData();
+        }
+        
+        return $cachedData;
     }
-
+    
+    /**
+     * Кэширует данные очереди в Redis
+     */
+    protected function cacheQueueData()
+    {
+        $queueData = QueuePosition::with('client')->orderBy('position', 'asc')->get();
+        $this->redisService->cacheQueueData($queueData->toArray());
+        return $queueData;
+    }
+    
+    /**
+     * Рассчитывает время обслуживания текущего клиента
+     */
+    protected function calculateServiceTime(): float
+    {
+        $now = now();
+        $diffInSeconds = $now->diffInSeconds($this->startTime);
+        
+        // Минимум 1 секунда, чтобы избежать нулевых значений
+        return max(1, $diffInSeconds);
+    }
+    
+    /**
+     * Получает статистику очереди
+     */
+    public function getQueueStats(): array
+    {
+        return $this->redisService->getQueueStats();
+    }
 }

@@ -1,0 +1,22 @@
+# Игнорируем данные базы
+db-data/
+
+# Игнорируем кэш и временные файлы
+.git/
+.idea/
+.vscode/
+node_modules/
+vendor/
+storage/logs/*
+storage/framework/cache/*
+storage/framework/sessions/*
+storage/framework/views/*
+
+# Игнорируем файлы окружения
+.env.*.local
+.env.local
+
+# Игнорируем файлы Docker
+docker-compose.yaml
+Dockerfile
+.dockerignore
