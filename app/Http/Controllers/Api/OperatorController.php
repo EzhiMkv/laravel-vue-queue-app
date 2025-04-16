@@ -454,4 +454,394 @@ class OperatorController extends Controller
             ], 500);
         }
     }
+    
+    /**
+     * Получить профиль текущего оператора.
+     *
+     * @param Request $request
+     * @return JsonResponse
+     */
+    public function getProfile(Request $request): JsonResponse
+    {
+        try {
+            $user = $request->user();
+            $operator = $user->operator;
+            
+            if (!$operator) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Оператор не найден'
+                ], 404);
+            }
+            
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'user' => $user->only(['id', 'name', 'email', 'avatar', 'phone']),
+                    'operator' => $operator->load('currentQueue'),
+                ]
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Ошибка при получении профиля оператора: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка при получении профиля оператора'
+            ], 500);
+        }
+    }
+    
+    /**
+     * Обновить профиль текущего оператора.
+     *
+     * @param Request $request
+     * @return JsonResponse
+     */
+    public function updateProfile(Request $request): JsonResponse
+    {
+        try {
+            $request->validate([
+                'name' => 'nullable|string|max:255',
+                'phone' => 'nullable|string|max:20',
+                'avatar' => 'nullable|string',
+                'skills' => 'nullable|array',
+                'max_clients_per_day' => 'nullable|integer|min:0',
+            ]);
+            
+            $user = $request->user();
+            $operator = $user->operator;
+            
+            if (!$operator) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Оператор не найден'
+                ], 404);
+            }
+            
+            DB::beginTransaction();
+            
+            // Обновляем данные пользователя
+            if ($request->has('name')) {
+                $user->name = $request->name;
+            }
+            
+            if ($request->has('phone')) {
+                $user->phone = $request->phone;
+            }
+            
+            if ($request->has('avatar')) {
+                $user->avatar = $request->avatar;
+            }
+            
+            $user->save();
+            
+            // Обновляем данные оператора
+            if ($request->has('skills')) {
+                $operator->skills = $request->skills;
+            }
+            
+            if ($request->has('max_clients_per_day')) {
+                $operator->max_clients_per_day = $request->max_clients_per_day;
+            }
+            
+            $operator->save();
+            
+            DB::commit();
+            
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'user' => $user->only(['id', 'name', 'email', 'avatar', 'phone']),
+                    'operator' => $operator->fresh(),
+                ],
+                'message' => 'Профиль успешно обновлен'
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Ошибка при обновлении профиля оператора: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка при обновлении профиля оператора'
+            ], 500);
+        }
+    }
+    
+    /**
+     * Обновить статус текущего оператора.
+     *
+     * @param Request $request
+     * @return JsonResponse
+     */
+    public function updateStatus(Request $request): JsonResponse
+    {
+        try {
+            $request->validate([
+                'status' => 'required|string|in:available,busy,offline'
+            ]);
+            
+            $user = $request->user();
+            $operator = $user->operator;
+            
+            if (!$operator) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Оператор не найден'
+                ], 404);
+            }
+            
+            $result = $this->operatorService->changeOperatorStatus($operator, $request->status);
+            
+            if (!$result) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Не удалось изменить статус оператора'
+                ], 500);
+            }
+            
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'operator' => $operator->fresh(),
+                ],
+                'message' => 'Статус оператора успешно обновлен'
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Ошибка при обновлении статуса оператора: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка при обновлении статуса оператора'
+            ], 500);
+        }
+    }
+    
+    /**
+     * Получить очереди, на которые назначен текущий оператор.
+     *
+     * @param Request $request
+     * @return JsonResponse
+     */
+    public function getAssignedQueues(Request $request): JsonResponse
+    {
+        try {
+            $user = $request->user();
+            $operator = $user->operator;
+            
+            if (!$operator) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Оператор не найден'
+                ], 404);
+            }
+            
+            // Если оператор назначен на очередь, возвращаем ее
+            if ($operator->current_queue_id) {
+                $queue = $this->queueService->getQueue($operator->current_queue_id);
+                
+                return response()->json([
+                    'success' => true,
+                    'data' => [
+                        'current_queue' => $queue,
+                        'queues' => [$queue],
+                    ]
+                ]);
+            }
+            
+            // Иначе возвращаем список доступных очередей
+            $queues = $this->queueService->getQueues(['status' => 'active']);
+            
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'current_queue' => null,
+                    'queues' => $queues,
+                ]
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Ошибка при получении очередей оператора: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка при получении очередей оператора'
+            ], 500);
+        }
+    }
+    
+    /**
+     * Назначить текущего оператора на очередь.
+     *
+     * @param Request $request
+     * @param string $queueId ID очереди
+     * @return JsonResponse
+     */
+    public function assignSelfToQueue(Request $request, string $queueId): JsonResponse
+    {
+        try {
+            $user = $request->user();
+            $operator = $user->operator;
+            
+            if (!$operator) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Оператор не найден'
+                ], 404);
+            }
+            
+            $queue = $this->queueService->getQueue($queueId);
+            
+            if (!$queue) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Очередь не найдена'
+                ], 404);
+            }
+            
+            $result = $this->operatorService->assignOperatorToQueue($operator, $queue);
+            
+            if (!$result) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Не удалось назначить оператора на очередь'
+                ], 500);
+            }
+            
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'operator' => $operator->fresh()->load('currentQueue'),
+                ],
+                'message' => 'Оператор успешно назначен на очередь'
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Ошибка при назначении оператора на очередь: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка при назначении оператора на очередь'
+            ], 500);
+        }
+    }
+    
+    /**
+     * Получить статистику текущего оператора.
+     *
+     * @param Request $request
+     * @return JsonResponse
+     */
+    public function getOwnStats(Request $request): JsonResponse
+    {
+        try {
+            $period = $request->period ?? 'day';
+            $user = $request->user();
+            $operator = $user->operator;
+            
+            if (!$operator) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Оператор не найден'
+                ], 404);
+            }
+            
+            $stats = $this->operatorService->getOperatorStats($operator, $period);
+            
+            return response()->json([
+                'success' => true,
+                'data' => $stats
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Ошибка при получении статистики оператора: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка при получении статистики оператора'
+            ], 500);
+        }
+    }
+    
+    /**
+     * Получить историю обслуживания клиентов текущим оператором.
+     *
+     * @param Request $request
+     * @return JsonResponse
+     */
+    public function getServiceHistory(Request $request): JsonResponse
+    {
+        try {
+            $user = $request->user();
+            $operator = $user->operator;
+            
+            if (!$operator) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Оператор не найден'
+                ], 404);
+            }
+            
+            // Получаем историю обслуживания с пагинацией
+            $perPage = $request->per_page ?? 15;
+            $page = $request->page ?? 1;
+            
+            $serviceLogs = ServiceLog::with(['client', 'queue'])
+                ->where('operator_id', $operator->id)
+                ->orderBy('created_at', 'desc')
+                ->paginate($perPage, ['*'], 'page', $page);
+            
+            return response()->json([
+                'success' => true,
+                'data' => $serviceLogs
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Ошибка при получении истории обслуживания: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка при получении истории обслуживания'
+            ], 500);
+        }
+    }
+    
+    /**
+     * Получить статистику всех операторов (для администратора).
+     *
+     * @param Request $request
+     * @return JsonResponse
+     */
+    public function getAllStats(Request $request): JsonResponse
+    {
+        try {
+            $period = $request->period ?? 'day';
+            
+            // Получаем всех операторов
+            $operators = $this->operatorService->getOperators();
+            
+            $stats = [];
+            foreach ($operators as $operator) {
+                $operatorStats = $this->operatorService->getOperatorStats($operator, $period);
+                $stats[] = [
+                    'operator' => $operator->only(['id', 'user_id', 'status']),
+                    'user' => $operator->user ? $operator->user->only(['id', 'name', 'email']) : null,
+                    'stats' => $operatorStats,
+                ];
+            }
+            
+            // Суммарная статистика
+            $totalClientsServed = array_sum(array_column($stats, 'stats.clients_served_period'));
+            $totalServiceTime = array_sum(array_column($stats, 'stats.period_average_service_time')) * count($operators);
+            $averageServiceTime = count($operators) > 0 ? $totalServiceTime / count($operators) : 0;
+            
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'operators' => $stats,
+                    'summary' => [
+                        'total_operators' => count($operators),
+                        'active_operators' => $operators->where('status', 'available')->count(),
+                        'total_clients_served' => $totalClientsServed,
+                        'average_service_time' => round($averageServiceTime),
+                        'period' => $period,
+                    ],
+                ]
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Ошибка при получении статистики операторов: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка при получении статистики операторов'
+            ], 500);
+        }
+    }
 }

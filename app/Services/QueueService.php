@@ -6,11 +6,11 @@ use App\Domain\Contracts\Queue\QueueServiceInterface;
 use App\Domain\Contracts\Queue\QueueManagementInterface;
 use App\Domain\Contracts\Queue\QueueClientOperationsInterface;
 use App\Domain\Contracts\Queue\QueueAnalyticsInterface;
-use App\Domain\Contracts\Cache\CacheServiceInterface;
 use App\Models\Client;
+use App\Models\Operator;
 use App\Models\Queue;
 use App\Models\QueuePosition;
-use App\Models\Operator;
+use App\Models\ServiceLog;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -97,23 +97,114 @@ class QueueService implements
      */
     public function getQueue(string $queueId): ?Queue
     {
-        // Сначала проверяем кэш
-        $cacheKey = 'queue:' . $queueId;
-        $cachedQueue = $this->cacheService->get($cacheKey);
-        
-        if ($cachedQueue) {
-            return new Queue($cachedQueue);
+        try {
+            // Пытаемся получить из кэша
+            $cachedQueue = $this->cacheService->get('queue:' . $queueId);
+            
+            if ($cachedQueue) {
+                return $cachedQueue;
+            }
+            
+            // Если нет в кэше, получаем из БД
+            $queue = Queue::find($queueId);
+            
+            if ($queue) {
+                // Кэшируем очередь
+                $this->cacheQueueData($queue);
+            }
+            
+            return $queue;
+        } catch (\Exception $e) {
+            Log::error('Ошибка при получении очереди: ' . $e->getMessage());
+            return null;
         }
-        
-        // Если нет в кэше, получаем из БД
-        $queue = Queue::find($queueId);
-        
-        if ($queue) {
-            // Кэшируем информацию об очереди
-            $this->cacheQueueInfo($queue);
+    }
+    
+    /**
+     * Получить список всех активных очередей.
+     *
+     * @return \Illuminate\Database\Eloquent\Collection
+     */
+    public function getActiveQueues()
+    {
+        try {
+            // Пытаемся получить из кэша
+            $cachedQueues = $this->cacheService->get('active_queues');
+            
+            if ($cachedQueues) {
+                return $cachedQueues;
+            }
+            
+            // Если нет в кэше, получаем из БД
+            $queues = Queue::where('status', 'active')->get();
+            
+            // Кэшируем результат
+            $this->cacheService->set('active_queues', $queues, 60 * 5); // кэшируем на 5 минут
+            
+            return $queues;
+        } catch (\Exception $e) {
+            Log::error('Ошибка при получении активных очередей: ' . $e->getMessage());
+            return collect(); // Возвращаем пустую коллекцию в случае ошибки
         }
-        
-        return $queue;
+    }
+    
+    /**
+     * Получить текущее состояние очереди.
+     *
+     * @param Queue $queue Очередь
+     * @return array
+     */
+    public function getQueueState(Queue $queue): array
+    {
+        try {
+            // Получаем количество клиентов в очереди
+            $clientCount = QueuePosition::where('queue_id', $queue->id)
+                ->where('status', 'waiting')
+                ->count();
+            
+            // Получаем количество активных операторов
+            $operatorCount = Operator::where('current_queue_id', $queue->id)
+                ->where('status', 'available')
+                ->count();
+            
+            // Получаем среднее время обслуживания
+            $avgServiceTime = ServiceLog::where('queue_id', $queue->id)
+                ->where('created_at', '>=', now()->subDay())
+                ->avg('service_time') ?? 0;
+            
+            // Рассчитываем примерное время ожидания
+            $estimatedWaitTime = 0;
+            if ($operatorCount > 0) {
+                $estimatedWaitTime = ceil(($clientCount / $operatorCount) * $avgServiceTime);
+            } else if ($clientCount > 0) {
+                // Если нет операторов, но есть клиенты, устанавливаем большое значение
+                $estimatedWaitTime = 3600; // 1 час по умолчанию
+            }
+            
+            return [
+                'queue_id' => $queue->id,
+                'name' => $queue->name,
+                'status' => $queue->status,
+                'client_count' => $clientCount,
+                'operator_count' => $operatorCount,
+                'avg_service_time' => round($avgServiceTime),
+                'estimated_wait_time' => $estimatedWaitTime,
+                'updated_at' => now()->toIso8601String(),
+            ];
+        } catch (\Exception $e) {
+            Log::error('Ошибка при получении состояния очереди: ' . $e->getMessage());
+            return [
+                'queue_id' => $queue->id,
+                'name' => $queue->name,
+                'status' => $queue->status,
+                'client_count' => 0,
+                'operator_count' => 0,
+                'avg_service_time' => 0,
+                'estimated_wait_time' => 0,
+                'updated_at' => now()->toIso8601String(),
+                'error' => true,
+            ];
+        }
     }
     
     /**
@@ -249,9 +340,10 @@ class QueueService implements
      * @param Queue $queue Очередь
      * @param Client $client Клиент
      * @param string $priority Приоритет (normal, high, vip)
-     * @return QueuePosition|null Позиция в очереди или null в случае ошибки
+     * @return QueuePosition Позиция в очереди
+     * @throws \Exception В случае ошибки
      */
-    public function addClientToQueue(Queue $queue, Client $client, string $priority = 'normal'): ?QueuePosition
+    public function addClientToQueue(Queue $queue, Client $client, string $priority = 'normal'): QueuePosition
     {
         try {
             // Проверяем, не находится ли клиент уже в очереди
@@ -383,10 +475,56 @@ class QueueService implements
      * Вызвать следующего клиента в очереди.
      *
      * @param Queue $queue Очередь
-     * @param Operator|null $operator Оператор, вызывающий клиента
+     * @return QueuePosition|null Позиция в очереди или null, если очередь пуста
+     */
+    public function callNextClient(Queue $queue): ?QueuePosition
+    {
+        try {
+            DB::beginTransaction();
+            
+            // Получаем следующего клиента в очереди
+            $nextPosition = QueuePosition::where('queue_id', $queue->id)
+                ->where('status', 'waiting')
+                ->orderBy('position', 'asc')
+                ->first();
+            
+            if (!$nextPosition) {
+                return null; // Очередь пуста
+            }
+            
+            // Обновляем статус позиции
+            $nextPosition->status = 'called';
+            $nextPosition->called_at = now();
+            $nextPosition->save();
+            
+            // Считаем время ожидания
+            $waitTime = $nextPosition->called_at->diffInSeconds($nextPosition->created_at);
+            
+            // Сохраняем статистику в кэш
+            $this->cacheService->set('client:' . $nextPosition->client_id . ':wait_time', $waitTime);
+            $this->cacheService->increment('queue:' . $queue->id . ':total_wait_time', $waitTime);
+            $this->cacheService->increment('queue:' . $queue->id . ':clients_served');
+            
+            // Отправляем событие в Kafka
+            $this->kafkaProducer->sendClientCalledEvent($queue, $nextPosition->client);
+            
+            DB::commit();
+            return $nextPosition;
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Ошибка при вызове следующего клиента: ' . $e->getMessage());
+            return null;
+        }
+    }
+    
+    /**
+     * Вспомогательный метод для вызова клиента оператором.
+     *
+     * @param Queue $queue Очередь
+     * @param Operator $operator Оператор, вызывающий клиента
      * @return Client|null Следующий клиент или null, если очередь пуста
      */
-    public function callNextClient(Queue $queue, ?Operator $operator = null): ?Client
+    public function callNextClientByOperator(Queue $queue, Operator $operator): ?Client
     {
         try {
             DB::beginTransaction();
@@ -406,11 +544,7 @@ class QueueService implements
             // Обновляем статус позиции
             $nextPosition->status = 'called';
             $nextPosition->called_at = now();
-            
-            if ($operator) {
-                $nextPosition->operator_id = $operator->id;
-            }
-            
+            $nextPosition->operator_id = $operator->id;
             $nextPosition->save();
             
             // Считаем время ожидания
@@ -431,7 +565,7 @@ class QueueService implements
             return $client;
         } catch (\Exception $e) {
             DB::rollBack();
-            Log::error('Ошибка при вызове следующего клиента: ' . $e->getMessage());
+            Log::error('Ошибка при вызове следующего клиента оператором: ' . $e->getMessage());
             return null;
         }
     }

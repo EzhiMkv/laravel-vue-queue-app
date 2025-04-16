@@ -39,8 +39,7 @@ class DomainServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        // Регистрация кэш-сервисов
-        $this->app->singleton(CacheServiceInterface::class, RedisCacheService::class);
+        // Регистрация кэш-сервисов перенесена в AppServiceProvider
 
         // Регистрация сервисов для очередей
         $this->app->bind(QueueManagementInterface::class, QueueManagementService::class);
