@@ -17,6 +17,8 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
 
+use App\Domain\Contracts\Cache\CacheServiceInterface;
+
 class QueueService implements 
     QueueServiceInterface,
     QueueManagementInterface,

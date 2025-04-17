@@ -52,16 +52,18 @@ class RoleSeeder extends Seeder
             ],
         ];
 
-        foreach ($roles as $roleData) {
-            Role::updateOrCreate(
-                ['slug' => $roleData['slug']],
-                [
-                    'id' => Str::uuid(),
-                    'name' => $roleData['name'],
-                    'description' => $roleData['description'],
-                    'permissions' => $roleData['permissions'],
-                ]
-            );
+        // Сначала очистим таблицу ролей, чтобы ID были последовательными
+        Role::truncate();
+        
+        // Теперь создадим роли с автоинкрементными ID
+        foreach ($roles as $index => $roleData) {
+            Role::create([
+                'id' => $index + 1, // Явно указываем ID, начиная с 1
+                'slug' => $roleData['slug'],
+                'name' => $roleData['name'],
+                'description' => $roleData['description'],
+                'permissions' => $roleData['permissions'],
+            ]);
         }
     }
 }

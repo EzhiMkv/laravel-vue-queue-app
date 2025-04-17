@@ -79,20 +79,21 @@ class ClientManagementService implements ClientManagementInterface
      */
     public function getClient(int $clientId): ?Client
     {
-        // Пытаемся получить из кэша
-        $cacheKey = self::CACHE_PREFIX . 'info:' . $clientId;
-        $cachedClient = $this->cacheService->get($cacheKey);
+        // Отключаем кэширование - всегда получаем данные напрямую из БД
+        // $cacheKey = self::CACHE_PREFIX . 'info:' . $clientId;
+        // $cachedClient = $this->cacheService->get($cacheKey);
 
-        if ($cachedClient) {
-            return new Client($cachedClient);
-        }
+        // if ($cachedClient) {
+        //     return new Client($cachedClient);
+        // }
 
         // Если нет в кэше, получаем из БД
         $client = Client::find($clientId);
 
-        if ($client) {
-            $this->cacheClientInfo($client);
-        }
+        // Больше не кэшируем клиентов
+        // if ($client) {
+        //     $this->cacheClientInfo($client);
+        // }
 
         return $client;
     }
@@ -113,8 +114,8 @@ class ClientManagementService implements ClientManagementInterface
             $client->fill($data);
             $client->save();
 
-            // Обновляем кэш
-            $this->cacheClientInfo($client);
+            // Отключаем обновление кэша
+            // $this->cacheClientInfo($client);
 
             DB::commit();
 
@@ -138,6 +139,8 @@ class ClientManagementService implements ClientManagementInterface
      */
     public function getClients(array $filters = [])
     {
+        // Отключаем кэширование для админского дашборда
+        // Всегда получаем свежие данные из БД
         $query = Client::query();
 
         // Применяем фильтры

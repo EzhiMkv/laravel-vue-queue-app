@@ -33,6 +33,23 @@ Route::prefix('queues')->group(function () {
     Route::post('/{queueId}/join', [QueueController::class, 'joinQueue']);
 });
 
+// Временный маршрут для дебага
+Route::get('/debug-user', function (Request $request) {
+    if ($request->user()) {
+        return response()->json([
+            'success' => true,
+            'user' => $request->user()->load('role'),
+            'token_valid' => true
+        ]);
+    }
+    
+    return response()->json([
+        'success' => false,
+        'message' => 'Пользователь не аутентифицирован или токен недействителен',
+        'token_valid' => false
+    ]);
+});
+
 // Защищенные маршруты
 Route::middleware('auth:sanctum')->group(function () {
     // Общие маршруты для всех аутентифицированных пользователей
@@ -49,6 +66,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('clients/{client}/history', [ClientController::class, 'getClientHistory']);
         
         // Очереди
+        Route::get('queues', [QueueController::class, 'index']); // Добавлен GET-маршрут для списка очередей
         Route::post('queues', [QueueController::class, 'store']);
         Route::put('queues/{queueId}', [QueueController::class, 'update']);
         Route::delete('queues/{queueId}', [QueueController::class, 'destroy']);

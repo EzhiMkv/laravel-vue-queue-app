@@ -3,7 +3,7 @@
 namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
-use Illuminate\Database\Eloquent\Concerns\HasUuids;
+
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasOne;
@@ -13,7 +13,7 @@ use Laravel\Sanctum\HasApiTokens;
 
 class User extends Authenticatable
 {
-    use HasApiTokens, HasFactory, Notifiable, HasUuids;
+    use HasApiTokens, HasFactory, Notifiable;
 
     /**
      * The attributes that are mass assignable.
@@ -61,13 +61,13 @@ class User extends Authenticatable
     }
     
     /**
-     * Получить оператора, связанного с пользователем.
+     * Получить профиль пользователя.
      *
      * @return HasOne
      */
-    public function operator(): HasOne
+    public function profile(): HasOne
     {
-        return $this->hasOne(Operator::class);
+        return $this->hasOne(Profile::class);
     }
     
     /**
@@ -142,5 +142,75 @@ class User extends Authenticatable
     public function isAdmin(): bool
     {
         return $this->hasRole('admin');
+    }
+    
+    /**
+     * Создать соответствующий профиль на основе роли пользователя.
+     *
+     * @return Profile
+     */
+    public function createProfileBasedOnRole(): Profile
+    {
+        $type = match($this->role->slug) {
+            'admin' => 'admin',
+            'operator' => 'operator',
+            'client' => 'client',
+            default => 'client'
+        };
+        
+        $attributes = match($type) {
+            'operator' => [
+                'max_clients_per_day' => 50,
+                'clients_served_today' => 0,
+                'skills' => ['general', 'support']
+            ],
+            'client' => [
+                'preferences' => [],
+                'history' => []
+            ],
+            default => []
+        };
+        
+        $status = match($type) {
+            'operator' => 'available',
+            'client' => 'waiting',
+            default => 'active'
+        };
+        
+        return $this->profile()->create([
+            'type' => $type,
+            'status' => $status,
+            'attributes' => $attributes
+        ]);
+    }
+    
+    /**
+     * Получить профиль клиента, если пользователь является клиентом.
+     *
+     * @return Profile|null
+     */
+    public function getClientProfile(): ?Profile
+    {
+        return $this->isClient() ? $this->profile : null;
+    }
+    
+    /**
+     * Получить профиль оператора, если пользователь является оператором.
+     *
+     * @return Profile|null
+     */
+    public function getOperatorProfile(): ?Profile
+    {
+        return $this->isOperator() ? $this->profile : null;
+    }
+    
+    /**
+     * Получить профиль администратора, если пользователь является администратором.
+     *
+     * @return Profile|null
+     */
+    public function getAdminProfile(): ?Profile
+    {
+        return $this->isAdmin() ? $this->profile : null;
     }
 }

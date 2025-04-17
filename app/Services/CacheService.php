@@ -125,14 +125,17 @@ class CacheService implements
     }
 
     /**
-     * Очистить весь кэш.
+     * Очистить кэш.
      *
+     * @param string|null $pattern Шаблон ключей
      * @return bool Успешность операции
      */
-    public function clear(): bool
+    public function clear(?string $pattern = null): bool
     {
         try {
-            return (bool) Redis::flushDB();
+            return $pattern 
+                ? (bool) Redis::keys($pattern) 
+                : (bool) Redis::flushDB();
         } catch (\Exception $e) {
             Log::error('Ошибка при очистке кэша: ' . $e->getMessage());
             return false;
@@ -144,15 +147,16 @@ class CacheService implements
      *
      * @param string $key Ключ счетчика
      * @param int $increment Значение инкремента
-     * @return int|false Новое значение или false в случае ошибки
+     * @return int Новое значение
+     * @throws \Exception В случае ошибки
      */
-    public function increment(string $key, int $increment = 1)
+    public function increment(string $key, int $increment = 1): int
     {
         try {
             return Redis::incrby($key, $increment);
         } catch (\Exception $e) {
             Log::error('Ошибка при увеличении счетчика: ' . $e->getMessage());
-            return false;
+            throw $e;
         }
     }
 
@@ -161,15 +165,16 @@ class CacheService implements
      *
      * @param string $key Ключ счетчика
      * @param int $decrement Значение декремента
-     * @return int|false Новое значение или false в случае ошибки
+     * @return int Новое значение
+     * @throws \Exception В случае ошибки
      */
-    public function decrement(string $key, int $decrement = 1)
+    public function decrement(string $key, int $decrement = 1): int
     {
         try {
             return Redis::decrby($key, $decrement);
         } catch (\Exception $e) {
             Log::error('Ошибка при уменьшении счетчика: ' . $e->getMessage());
-            return false;
+            throw $e;
         }
     }
 
@@ -178,22 +183,17 @@ class CacheService implements
      *
      * @param string $key Ключ списка
      * @param mixed $value Значение
-     * @param bool $prepend Добавить в начало списка
-     * @return int|false Длина списка после операции или false в случае ошибки
+     * @return int Длина списка после операции
+     * @throws \Exception В случае ошибки
      */
-    public function listPush(string $key, $value, bool $prepend = false)
+    public function listPush(string $key, $value): int
     {
         try {
             $value = is_array($value) ? json_encode($value) : $value;
-            
-            if ($prepend) {
-                return Redis::lpush($key, $value);
-            } else {
-                return Redis::rpush($key, $value);
-            }
+            return Redis::rpush($key, $value);
         } catch (\Exception $e) {
             Log::error('Ошибка при добавлении элемента в список: ' . $e->getMessage());
-            return false;
+            throw $e;
         }
     }
 
@@ -233,15 +233,17 @@ class CacheService implements
     }
 
     /**
-     * Получить все элементы списка.
+     * Получить элементы списка.
      *
-     * @param string $key Ключ списка
-     * @return array Массив элементов списка
+     * @param string $key Ключ
+     * @param int $start Начальный индекс
+     * @param int $end Конечный индекс
+     * @return array
      */
-    public function listGetAll(string $key): array
+    public function listRange(string $key, int $start = 0, int $end = -1): array
     {
         try {
-            $values = Redis::lrange($key, 0, -1);
+            $values = Redis::lrange($key, $start, $end);
             
             if (!is_array($values)) {
                 return [];
@@ -280,15 +282,15 @@ class CacheService implements
     /**
      * Добавить элемент в множество.
      *
-     * @param string $key Ключ множества
+     * @param string $key Ключ
      * @param mixed $value Значение
-     * @return int|false Количество добавленных элементов или false в случае ошибки
+     * @return int
      */
-    public function setAdd(string $key, $value)
+    public function setAdd(string $key, $value): int
     {
         try {
             $value = is_array($value) ? json_encode($value) : $value;
-            return Redis::sadd($key, $value);
+            return (int) Redis::sadd($key, $value);
         } catch (\Exception $e) {
             Log::error('Ошибка при добавлении элемента в множество: ' . $e->getMessage());
             return false;
@@ -332,12 +334,12 @@ class CacheService implements
     }
 
     /**
-     * Получить все элементы множества.
+     * Получить элементы множества.
      *
-     * @param string $key Ключ множества
-     * @return array Массив элементов множества
+     * @param string $key Ключ
+     * @return array
      */
-    public function setGetAll(string $key): array
+    public function setMembers(string $key): array
     {
         try {
             $values = Redis::smembers($key);
@@ -381,13 +383,14 @@ class CacheService implements
      *
      * @param string $channel Канал
      * @param mixed $message Сообщение
-     * @return int|false Количество клиентов, получивших сообщение, или false в случае ошибки
+     * @return int Количество клиентов, получивших сообщение
+     * @throws \Exception В случае ошибки
      */
-    public function publish(string $channel, $message)
+    public function publish(string $channel, $message): int
     {
         try {
             $message = is_array($message) ? json_encode($message) : $message;
-            return Redis::publish($channel, $message);
+            return (int) Redis::publish($channel, $message);
         } catch (\Exception $e) {
             Log::error('Ошибка при публикации сообщения: ' . $e->getMessage());
             return false;
@@ -397,14 +400,15 @@ class CacheService implements
     /**
      * Подписаться на канал.
      *
-     * @param string $channel Канал
+     * @param string|array $channels Каналы
      * @param callable $callback Функция обратного вызова
      * @return void
      */
-    public function subscribe(string $channel, callable $callback): void
+    public function subscribe($channels, callable $callback): void
     {
         try {
-            Redis::subscribe([$channel], function ($message) use ($callback) {
+            $channels = is_array($channels) ? $channels : [$channels];
+            Redis::subscribe($channels, function ($message) use ($callback) {
                 // Пытаемся декодировать JSON, если это возможно
                 $decoded = json_decode($message, true);
                 if (json_last_error() === JSON_ERROR_NONE) {

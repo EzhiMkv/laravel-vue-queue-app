@@ -51,7 +51,7 @@ router.beforeEach(async (to, from, next) => {
     
     try {
         // Проверяем, авторизован ли пользователь
-        const response = await axios.get('/api/user')
+        const response = await axios.get('/user')
         const user = response.data
         
         // Если требуется определенная роль

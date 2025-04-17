@@ -246,32 +246,57 @@ const operatorStats = ref({})
 
 // Загрузка данных
 onMounted(async () => {
+  console.log('Загрузка данных для админ-панели...')
+  
   try {
     // Загрузка очередей
-    const queuesResponse = await axios.get('/api/admin/queues')
+    const queuesResponse = await axios.get('/admin/queues')
+    console.log('Ответ очередей:', queuesResponse)
     queues.value = queuesResponse.data.data || []
     
     // Загрузка операторов
-    const operatorsResponse = await axios.get('/api/admin/operators')
+    const operatorsResponse = await axios.get('/admin/operators')
+    console.log('Ответ операторов:', operatorsResponse)
     operators.value = operatorsResponse.data.data || []
     
     // Загрузка клиентов
-    const clientsResponse = await axios.get('/api/admin/clients')
+    const clientsResponse = await axios.get('/admin/clients')
+    console.log('Ответ клиентов:', clientsResponse)
     clients.value = clientsResponse.data.data || []
     
     // Загрузка ролей
-    const rolesResponse = await axios.get('/api/admin/roles')
+    const rolesResponse = await axios.get('/admin/roles')
+    console.log('Ответ ролей:', rolesResponse)
     roles.value = rolesResponse.data.data || []
     
     // Загрузка статистики очередей
-    const queueStatsResponse = await axios.get('/api/admin/stats/queues')
-    queueStats.value = queueStatsResponse.data.data || {}
+    const queueStatsResponse = await axios.get('/admin/stats/queues')
+    console.log('Ответ статистики очередей:', queueStatsResponse)
+    
+    // Проверяем формат ответа и обрабатываем соответственно
+    if (queueStatsResponse.data.data && queueStatsResponse.data.data.summary) {
+      // Если ответ в формате {"success":true,"data":{"summary":{...},"queues":[...]}}
+      queueStats.value = queueStatsResponse.data.data.summary || {}
+    } else {
+      // Если ответ в другом формате, пробуем получить данные напрямую
+      queueStats.value = queueStatsResponse.data.data || {}
+    }
     
     // Загрузка статистики операторов
-    const operatorStatsResponse = await axios.get('/api/admin/stats/operators')
-    operatorStats.value = operatorStatsResponse.data.data?.summary || {}
+    const operatorStatsResponse = await axios.get('/admin/stats/operators')
+    console.log('Ответ статистики операторов:', operatorStatsResponse)
+    
+    // Проверяем формат ответа и обрабатываем соответственно
+    if (operatorStatsResponse.data.data && operatorStatsResponse.data.data.summary) {
+      // Если ответ в формате {"success":true,"data":{"summary":{...},"operators":[...]}}
+      operatorStats.value = operatorStatsResponse.data.data.summary || {}
+    } else {
+      // Если ответ в другом формате, пробуем получить данные напрямую
+      operatorStats.value = operatorStatsResponse.data.data || {}
+    }
   } catch (error) {
-    console.error('Ошибка при загрузке данных:', error)
+    console.error('Ебаная ошибка при загрузке данных:', error)
+    console.error('Детали ошибки:', error.response || error.message)
   }
 })
 </script>

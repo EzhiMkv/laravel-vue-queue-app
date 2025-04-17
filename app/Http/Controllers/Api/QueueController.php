@@ -314,4 +314,59 @@ class QueueController extends Controller
             ], 500);
         }
     }
+    
+    /**
+     * Получить статистику по всем очередям.
+     *
+     * @param Request $request
+     * @return JsonResponse
+     */
+    public function getAllStats(Request $request): JsonResponse
+    {
+        try {
+            $period = $request->period ?? 'day';
+            
+            // Получаем все активные очереди
+            $queues = $this->queueService->getActiveQueues();
+            
+            // Собираем статистику по каждой очереди
+            $totalClients = 0;
+            $totalQueues = count($queues);
+            $queueStats = [];
+            
+            foreach ($queues as $queue) {
+                $stats = $this->queueService->getQueueStats($queue, $period);
+                $queueStats[] = [
+                    'id' => $queue->id,
+                    'name' => $queue->name,
+                    'stats' => $stats
+                ];
+                
+                // Считаем общее количество клиентов в очередях
+                $totalClients += $stats['currentClients'] ?? 0;
+            }
+            
+            // Формируем общую статистику
+            $summary = [
+                'totalQueues' => $totalQueues,
+                'activeQueues' => $totalQueues, // Предполагаем, что все полученные очереди активны
+                'totalClients' => $totalClients,
+                'period' => $period
+            ];
+            
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'summary' => $summary,
+                    'queues' => $queueStats
+                ]
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Ошибка при получении общей статистики очередей: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка при получении общей статистики очередей'
+            ], 500);
+        }
+    }
 }

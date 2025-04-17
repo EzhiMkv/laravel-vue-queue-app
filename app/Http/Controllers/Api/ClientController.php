@@ -2,31 +2,18 @@
 
 namespace App\Http\Controllers\Api;
 
-use App\Domain\Contracts\Client\ClientServiceInterface;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\ClientRequest;
-use App\Models\Client;
+use App\Models\User;
+use App\Models\Profile;
+use App\Models\Role;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Hash;
 
 class ClientController extends Controller
 {
-    /**
-     * @var ClientServiceInterface
-     */
-    protected $clientService;
-
-    /**
-     * Конструктор контроллера.
-     *
-     * @param ClientServiceInterface $clientService
-     */
-    public function __construct(ClientServiceInterface $clientService)
-    {
-        $this->clientService = $clientService;
-    }
-
     /**
      * Получить список всех клиентов.
      *
@@ -36,8 +23,47 @@ class ClientController extends Controller
     public function index(Request $request): JsonResponse
     {
         try {
-            $filters = $request->all(['status', 'search', 'sort_field', 'sort_direction', 'per_page']);
-            $clients = $this->clientService->getClients($filters);
+            // Получаем ID роли клиента
+            $clientRole = Role::where('slug', 'client')->first();
+            
+            if (!$clientRole) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Роль клиента не найдена'
+                ], 404);
+            }
+            
+            // Получаем пользователей с ролью клиента
+            $query = User::where('role_id', $clientRole->id)
+                ->with('profile');
+            
+            // Применяем фильтры
+            if ($request->has('status')) {
+                $query->whereHas('profile', function($q) use ($request) {
+                    $q->where('status', $request->status);
+                });
+            }
+            
+            if ($request->has('search')) {
+                $search = $request->search;
+                $query->where(function($q) use ($search) {
+                    $q->where('name', 'like', "%{$search}%")
+                      ->orWhere('email', 'like', "%{$search}%")
+                      ->orWhere('phone', 'like', "%{$search}%");
+                });
+            }
+            
+            // Сортировка
+            $sortField = $request->sort_field ?? 'created_at';
+            $sortDirection = $request->sort_direction ?? 'desc';
+            $query->orderBy($sortField, $sortDirection);
+            
+            // Пагинация
+            if ($request->has('per_page')) {
+                $clients = $query->paginate($request->per_page);
+            } else {
+                $clients = $query->get();
+            }
             
             return response()->json([
                 'success' => true,
@@ -61,7 +87,11 @@ class ClientController extends Controller
     public function show(int $clientId): JsonResponse
     {
         try {
-            $client = $this->clientService->getClient($clientId);
+            $client = User::with('profile', 'role')
+                ->whereHas('role', function($q) {
+                    $q->where('slug', 'client');
+                })
+                ->find($clientId);
             
             if (!$client) {
                 return response()->json([
@@ -95,27 +125,59 @@ class ClientController extends Controller
             $request->validate([
                 'name' => 'required|string|max:255',
                 'phone' => 'nullable|string|max:20',
-                'email' => 'nullable|email|max:255',
+                'email' => 'nullable|email|max:255|unique:users,email',
                 'metadata' => 'nullable|array'
             ]);
             
-            $client = $this->clientService->createClient($request->all());
+            // Получаем роль клиента
+            $clientRole = Role::where('slug', 'client')->first();
+            
+            if (!$clientRole) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Роль клиента не найдена'
+                ], 404);
+            }
+            
+            // Создаем пользователя
+            $client = new User();
+            $client->name = $request->name;
+            $client->email = $request->email;
+            $client->phone = $request->phone;
+            $client->password = Hash::make(str_random(10)); // Генерируем случайный пароль
+            $client->role_id = $clientRole->id;
+            $client->metadata = $request->metadata;
+            $client->save();
+            
+            // Создаем профиль
+            $profile = new Profile();
+            $profile->user_id = $client->id;
+            $profile->type = 'client';
+            $profile->status = 'waiting';
+            $profile->attributes = [
+                'preferences' => [],
+                'history' => [],
+                'visits_count' => 0,
+                'last_visit_date' => null,
+                'satisfaction_rating' => null,
+            ];
+            $profile->save();
             
             return response()->json([
                 'success' => true,
-                'data' => $client
+                'data' => $client->load('profile')
             ], 201);
         } catch (\Exception $e) {
             Log::error('Ошибка при создании клиента: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
-                'message' => $e->getMessage()
+                'message' => 'Ошибка при создании клиента: ' . $e->getMessage()
             ], 500);
         }
     }
 
     /**
-     * Обновить данные клиента.
+     * Обновить информацию о клиенте.
      *
      * @param Request $request
      * @param int $clientId ID клиента
@@ -125,14 +187,18 @@ class ClientController extends Controller
     {
         try {
             $request->validate([
-                'name' => 'nullable|string|max:255',
-                'phone' => 'nullable|string|max:20',
-                'email' => 'nullable|email|max:255',
-                'status' => 'nullable|string|in:waiting,serving,served,cancelled,skipped',
-                'metadata' => 'nullable|array'
+                'name' => 'sometimes|string|max:255',
+                'phone' => 'sometimes|nullable|string|max:20',
+                'email' => 'sometimes|nullable|email|max:255|unique:users,email,' . $clientId,
+                'status' => 'sometimes|string|in:waiting,active,blocked',
+                'metadata' => 'sometimes|nullable|array'
             ]);
             
-            $client = $this->clientService->updateClient($clientId, $request->all());
+            $client = User::with('profile')
+                ->whereHas('role', function($q) {
+                    $q->where('slug', 'client');
+                })
+                ->find($clientId);
             
             if (!$client) {
                 return response()->json([
@@ -141,15 +207,28 @@ class ClientController extends Controller
                 ], 404);
             }
             
+            // Обновляем данные пользователя
+            if ($request->has('name')) $client->name = $request->name;
+            if ($request->has('email')) $client->email = $request->email;
+            if ($request->has('phone')) $client->phone = $request->phone;
+            if ($request->has('metadata')) $client->metadata = $request->metadata;
+            $client->save();
+            
+            // Обновляем профиль
+            if ($request->has('status') && $client->profile) {
+                $client->profile->status = $request->status;
+                $client->profile->save();
+            }
+            
             return response()->json([
                 'success' => true,
-                'data' => $client
+                'data' => $client->fresh(['profile'])
             ]);
         } catch (\Exception $e) {
             Log::error('Ошибка при обновлении клиента: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
-                'message' => $e->getMessage()
+                'message' => 'Ошибка при обновлении клиента: ' . $e->getMessage()
             ], 500);
         }
     }
@@ -163,7 +242,10 @@ class ClientController extends Controller
     public function destroy(int $clientId): JsonResponse
     {
         try {
-            $client = $this->clientService->getClient($clientId);
+            $client = User::whereHas('role', function($q) {
+                    $q->where('slug', 'client');
+                })
+                ->find($clientId);
             
             if (!$client) {
                 return response()->json([
@@ -172,6 +254,12 @@ class ClientController extends Controller
                 ], 404);
             }
             
+            // Удаляем профиль
+            if ($client->profile) {
+                $client->profile->delete();
+            }
+            
+            // Удаляем пользователя
             $client->delete();
             
             return response()->json([
@@ -182,77 +270,11 @@ class ClientController extends Controller
             Log::error('Ошибка при удалении клиента: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при удалении клиента'
+                'message' => 'Ошибка при удалении клиента: ' . $e->getMessage()
             ], 500);
         }
     }
 
-    /**
-     * Получить позиции клиента во всех очередях.
-     *
-     * @param int $clientId ID клиента
-     * @return JsonResponse
-     */
-    public function getClientPositions(int $clientId): JsonResponse
-    {
-        try {
-            $client = $this->clientService->getClient($clientId);
-            
-            if (!$client) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Клиент не найден'
-                ], 404);
-            }
-            
-            $positions = $this->clientService->getClientPositions($client);
-            
-            return response()->json([
-                'success' => true,
-                'data' => $positions
-            ]);
-        } catch (\Exception $e) {
-            Log::error('Ошибка при получении позиций клиента: ' . $e->getMessage());
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при получении позиций клиента'
-            ], 500);
-        }
-    }
-
-    /**
-     * Получить историю обслуживания клиента.
-     *
-     * @param int $clientId ID клиента
-     * @return JsonResponse
-     */
-    public function getClientHistory(int $clientId): JsonResponse
-    {
-        try {
-            $client = $this->clientService->getClient($clientId);
-            
-            if (!$client) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Клиент не найден'
-                ], 404);
-            }
-            
-            $history = $this->clientService->getClientHistory($client);
-            
-            return response()->json([
-                'success' => true,
-                'data' => $history
-            ]);
-        } catch (\Exception $e) {
-            Log::error('Ошибка при получении истории клиента: ' . $e->getMessage());
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при получении истории клиента'
-            ], 500);
-        }
-    }
-    
     /**
      * Получить профиль текущего клиента.
      *
@@ -263,23 +285,38 @@ class ClientController extends Controller
     {
         try {
             $user = $request->user();
-            $client = Client::where('email', $user->email)->first();
+            $client = User::where('email', $user->email)->first();
             
             if (!$client) {
                 // Если клиент не найден, создаем его
-                $client = $this->clientService->createClient([
-                    'name' => $user->name,
-                    'email' => $user->email,
-                    'phone' => $user->phone,
-                    'status' => 'active',
-                ]);
+                $client = new User();
+                $client->name = $user->name;
+                $client->email = $user->email;
+                $client->phone = $user->phone;
+                $client->password = Hash::make(str_random(10)); // Генерируем случайный пароль
+                $client->role_id = Role::where('slug', 'client')->first()->id;
+                $client->save();
+                
+                // Создаем профиль
+                $profile = new Profile();
+                $profile->user_id = $client->id;
+                $profile->type = 'client';
+                $profile->status = 'waiting';
+                $profile->attributes = [
+                    'preferences' => [],
+                    'history' => [],
+                    'visits_count' => 0,
+                    'last_visit_date' => null,
+                    'satisfaction_rating' => null,
+                ];
+                $profile->save();
             }
             
             return response()->json([
                 'success' => true,
                 'data' => [
                     'user' => $user->only(['id', 'name', 'email', 'avatar', 'phone']),
-                    'client' => $client,
+                    'client' => $client->load('profile'),
                 ]
             ]);
         } catch (\Exception $e) {
@@ -290,7 +327,7 @@ class ClientController extends Controller
             ], 500);
         }
     }
-    
+
     /**
      * Обновить профиль текущего клиента.
      *
@@ -307,7 +344,7 @@ class ClientController extends Controller
             ]);
             
             $user = $request->user();
-            $client = Client::where('email', $user->email)->first();
+            $client = User::where('email', $user->email)->first();
             
             if (!$client) {
                 return response()->json([
@@ -342,7 +379,7 @@ class ClientController extends Controller
                 'success' => true,
                 'data' => [
                     'user' => $user->only(['id', 'name', 'email', 'avatar', 'phone']),
-                    'client' => $client->fresh(),
+                    'client' => $client->fresh(['profile']),
                 ],
                 'message' => 'Профиль успешно обновлен'
             ]);
@@ -355,7 +392,7 @@ class ClientController extends Controller
             ], 500);
         }
     }
-    
+
     /**
      * Получить позиции текущего клиента во всех очередях.
      *
@@ -366,7 +403,7 @@ class ClientController extends Controller
     {
         try {
             $user = $request->user();
-            $client = Client::where('email', $user->email)->first();
+            $client = User::where('email', $user->email)->first();
             
             if (!$client) {
                 return response()->json([
@@ -375,11 +412,11 @@ class ClientController extends Controller
                 ], 404);
             }
             
-            $positions = $this->clientService->getClientPositions($client);
+            // TODO: реализовать получение позиций клиента во всех очередях
             
             return response()->json([
                 'success' => true,
-                'data' => $positions
+                'data' => []
             ]);
         } catch (\Exception $e) {
             Log::error('Ошибка при получении позиций клиента: ' . $e->getMessage());
@@ -389,7 +426,7 @@ class ClientController extends Controller
             ], 500);
         }
     }
-    
+
     /**
      * Получить позицию текущего клиента в конкретной очереди.
      *
@@ -401,7 +438,7 @@ class ClientController extends Controller
     {
         try {
             $user = $request->user();
-            $client = Client::where('email', $user->email)->first();
+            $client = User::where('email', $user->email)->first();
             
             if (!$client) {
                 return response()->json([
@@ -410,36 +447,11 @@ class ClientController extends Controller
                 ], 404);
             }
             
-            $queue = $this->queueService->getQueue($queueId);
-            
-            if (!$queue) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Очередь не найдена'
-                ], 404);
-            }
-            
-            $position = $this->queueService->getClientPositionInQueue($queue, $client);
-            
-            if ($position === null) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Клиент не находится в этой очереди'
-                ], 404);
-            }
-            
-            // Получаем примерное время ожидания
-            $queueStats = $this->queueService->getQueueStats($queue);
-            $estimatedWaitTime = $queueStats['estimated_wait_time'] ?? 0;
+            // TODO: реализовать получение позиции клиента в конкретной очереди
             
             return response()->json([
                 'success' => true,
-                'data' => [
-                    'position' => $position,
-                    'queue' => $queue->only(['id', 'name', 'status']),
-                    'estimated_wait_time' => $estimatedWaitTime,
-                    'estimated_wait_time_formatted' => $queueStats['estimated_wait_time_formatted'] ?? '0 сек',
-                ]
+                'data' => []
             ]);
         } catch (\Exception $e) {
             Log::error('Ошибка при получении позиции клиента в очереди: ' . $e->getMessage());
@@ -449,7 +461,7 @@ class ClientController extends Controller
             ], 500);
         }
     }
-    
+
     /**
      * Получить историю обслуживания текущего клиента.
      *
@@ -460,7 +472,7 @@ class ClientController extends Controller
     {
         try {
             $user = $request->user();
-            $client = Client::where('email', $user->email)->first();
+            $client = User::where('email', $user->email)->first();
             
             if (!$client) {
                 return response()->json([
@@ -469,11 +481,11 @@ class ClientController extends Controller
                 ], 404);
             }
             
-            $history = $this->clientService->getClientHistory($client);
+            // TODO: реализовать получение истории обслуживания клиента
             
             return response()->json([
                 'success' => true,
-                'data' => $history
+                'data' => []
             ]);
         } catch (\Exception $e) {
             Log::error('Ошибка при получении истории клиента: ' . $e->getMessage());

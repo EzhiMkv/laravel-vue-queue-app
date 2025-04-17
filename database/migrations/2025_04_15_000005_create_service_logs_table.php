@@ -12,13 +12,14 @@ return new class extends Migration
     public function up(): void
     {
         Schema::create('service_logs', function (Blueprint $table) {
-            $table->uuid('id')->primary();
-            $table->uuid('queue_id');
+            $table->id();
+            $table->foreignId('queue_id');
             $table->foreign('queue_id')->references('id')->on('queues')->onDelete('cascade');
-            $table->foreignId('client_id')->constrained('clients')->cascadeOnDelete();
-            $table->uuid('operator_id');
+            $table->foreignId('client_id');
+            $table->foreign('client_id')->references('id')->on('clients')->onDelete('cascade');
+            $table->foreignId('operator_id');
             $table->foreign('operator_id')->references('id')->on('operators')->onDelete('cascade');
-            $table->uuid('position_id')->nullable();
+            $table->foreignId('position_id')->nullable();
             $table->foreign('position_id')->references('id')->on('queue_positions')->nullOnDelete();
             $table->timestamp('started_at');
             $table->timestamp('ended_at')->nullable();

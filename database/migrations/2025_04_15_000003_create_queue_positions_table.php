@@ -16,10 +16,11 @@ return new class extends Migration
         
         // Создаем новую таблицу queue_positions
         Schema::create('queue_positions', function (Blueprint $table) {
-            $table->uuid('id')->primary();
-            $table->uuid('queue_id');
+            $table->id();
+            $table->foreignId('queue_id');
             $table->foreign('queue_id')->references('id')->on('queues')->onDelete('cascade');
-            $table->foreignId('client_id')->constrained('clients')->cascadeOnDelete();
+            $table->foreignId('client_id');
+            $table->foreign('client_id')->references('id')->on('clients')->onDelete('cascade');
             $table->integer('position');
             $table->enum('priority', ['low', 'normal', 'high', 'vip'])->default('normal');
             $table->integer('estimated_wait_time')->nullable(); // в секундах

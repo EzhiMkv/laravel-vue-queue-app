@@ -28,7 +28,10 @@ class AddClientToQueue implements ShouldQueue
      */
     public function handle(ClientCreated $event): void
     {
-        $this->queueService->addClientToQueue($event->client);
+        $queue = $this->queueService->getActiveQueues()->first();
+if ($queue) {
+    $this->queueService->addClientToQueue($queue, $event->client);
+}
         
         // Отправляем событие в Kafka после добавления в очередь
         $position = $event->client->position;

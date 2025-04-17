@@ -347,7 +347,7 @@ const formatDate = (dateString) => {
 // Встать в очередь
 const joinQueue = async (queueId) => {
   try {
-    const response = await axios.post(`/api/client/queues/${queueId}/join`)
+    const response = await axios.post(`/client/queues/${queueId}/join`)
     
     if (response.data.success) {
       showQueueSelector.value = false
@@ -363,7 +363,7 @@ const joinQueue = async (queueId) => {
 // Выйти из очереди
 const leaveQueue = async (queueId) => {
   try {
-    const response = await axios.post(`/api/client/queues/${queueId}/leave`)
+    const response = await axios.post(`/client/queues/${queueId}/leave`)
     
     if (response.data.success) {
       // Обновляем список активных позиций
@@ -377,7 +377,7 @@ const leaveQueue = async (queueId) => {
 // Обновление профиля
 const updateProfile = async () => {
   try {
-    const response = await axios.put('/api/client/profile', {
+    const response = await axios.put('/client/profile', {
       name: profile.value.name,
       phone: profile.value.phone
     })
@@ -393,7 +393,7 @@ const updateProfile = async () => {
 // Загрузка активных позиций
 const loadPositions = async () => {
   try {
-    const response = await axios.get('/api/client/positions')
+    const response = await axios.get('/client/positions')
     
     if (response.data.success) {
       activePositions.value = response.data.data || []
@@ -406,7 +406,7 @@ const loadPositions = async () => {
 // Загрузка доступных очередей
 const loadAvailableQueues = async () => {
   try {
-    const response = await axios.get('/api/queues')
+    const response = await axios.get('/queues')
     
     if (response.data.success) {
       // Фильтруем очереди, в которых клиент уже стоит
@@ -423,7 +423,7 @@ const loadAvailableQueues = async () => {
 // Загрузка истории
 const loadHistory = async () => {
   try {
-    const response = await axios.get('/api/client/history')
+    const response = await axios.get('/client/history')
     
     if (response.data.success) {
       history.value = response.data.data || []
@@ -436,7 +436,7 @@ const loadHistory = async () => {
 // Загрузка профиля
 const loadProfile = async () => {
   try {
-    const response = await axios.get('/api/client/profile')
+    const response = await axios.get('/client/profile')
     
     if (response.data.success) {
       profile.value = {

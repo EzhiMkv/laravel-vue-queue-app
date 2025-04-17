@@ -12,8 +12,8 @@ return new class extends Migration
     public function up(): void
     {
         Schema::create('queue', function (Blueprint $table) {
-            $table->id();
-            $table->foreignId('client_id')->constrained('clients')->cascadeOnDelete();
+            $table->uuid('id')->primary();
+            $table->uuid('client_id')->constrained('clients')->cascadeOnDelete();
             $table->integer('position');
             $table->timestamps();
         });

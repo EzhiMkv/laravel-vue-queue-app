@@ -12,7 +12,7 @@ return new class extends Migration
     public function up(): void
     {
         Schema::create('roles', function (Blueprint $table) {
-            $table->uuid('id')->primary();
+            $table->id();
             $table->string('name');
             $table->string('slug')->unique();
             $table->text('description')->nullable();
@@ -22,7 +22,7 @@ return new class extends Migration
         });
 
         Schema::table('users', function (Blueprint $table) {
-            $table->uuid('role_id')->nullable()->after('id');
+            $table->foreignId('role_id')->nullable()->after('id');
             $table->foreign('role_id')->references('id')->on('roles')->onDelete('set null');
         });
     }
